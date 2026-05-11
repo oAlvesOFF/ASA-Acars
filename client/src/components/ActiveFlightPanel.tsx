@@ -1,0 +1,474 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
+import type { ActiveFlightInfo, SimSnapshot } from "../types";
+import { formatRefreshError } from "../lib/refreshErrorFormatter";
+import { useConfirm } from "./ConfirmDialog";
+import { InfoStrip } from "./InfoStrip";
+import { LiveTapes } from "./LiveTapes";
+import { LoadsheetMonitor } from "./LoadsheetMonitor";
+import { ManualFileDialog } from "./ManualFileDialog";
+import { RouteMap } from "./RouteMap";
+import { WeatherBriefing } from "./WeatherBriefing";
+
+interface Props {
+  /** Active-flight info, owned by Dashboard. Pure display. */
+  info: ActiveFlightInfo | null;
+  /** Live sim telemetry — fed into the live-tapes strip. */
+  simSnapshot?: SimSnapshot | null;
+  /** Notify parent when the flight ends so it can refresh bids etc. */
+  onEnded?: () => void;
+}
+
+function fmtDistance(nm: number, locale: string): string {
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(
+    nm,
+  )} nmi`;
+}
+
+export function ActiveFlightPanel({ info, simSnapshot, onEnded }: Props) {
+  const { t, i18n } = useTranslation();
+  const { confirm, dialog: confirmDialog } = useConfirm();
+  const [busy, setBusy] = useState<"end" | "cancel" | "forget" | "refresh" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // v0.3.2: short-lived inline message after a successful OFP refresh
+  // ("Plan-Werte aktualisiert"). Cleared on the next action so it
+  // doesn't linger forever.
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+  /**
+   * When `flight_end` fails with `flight_validation_failed`, the backend
+   * sends back a list of i18n-keyed missing-field codes. We surface the
+   * ManualFileDialog so the pilot can either cancel the flight or file it
+   * as a manual PIREP (with optional divert + reason). Null = no dialog.
+   */
+  const [validationMissing, setValidationMissing] = useState<string[] | null>(
+    null,
+  );
+  // Tick once a second so the elapsed-time display refreshes between polls.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!info) return null;
+
+  async function handleEnd() {
+    if (busy) return;
+    setBusy("end");
+    setError(null);
+    try {
+      await invoke("flight_end");
+      onEnded?.();
+    } catch (err: unknown) {
+      // Backend's UiError shape: { code, message, details? }. The validation
+      // path puts `{ missing: ["distance", ...] }` into details so we can
+      // render the dialog with the exact reasons the file was rejected.
+      const e = err as {
+        code?: string;
+        message?: string;
+        details?: { missing?: string[] };
+      };
+      if (e?.code === "flight_validation_failed") {
+        setValidationMissing(e.details?.missing ?? []);
+      } else {
+        const msg =
+          typeof err === "object" && err !== null && "message" in err
+            ? String((err as { message: string }).message)
+            : String(err);
+        setError(msg);
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** User accepted the cancel option from the validation dialog. */
+  async function handleCancelFromDialog() {
+    setValidationMissing(null);
+    setBusy("cancel");
+    setError(null);
+    try {
+      await invoke("flight_cancel");
+      onEnded?.();
+    } catch (err: unknown) {
+      const msg =
+        typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: string }).message)
+          : String(err);
+      setError(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleCancel() {
+    if (busy) return;
+    if (
+      !(await confirm({
+        message: t("active_flight.confirm_cancel"),
+        destructive: true,
+      }))
+    )
+      return;
+    setBusy("cancel");
+    setError(null);
+    try {
+      await invoke("flight_cancel");
+      onEnded?.();
+    } catch (err: unknown) {
+      const msg =
+        typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: string }).message)
+          : String(err);
+      setError(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * v0.3.2: Refresh the SimBrief OFP for the running flight without
+   * having to discard & restart. Real-pilot workflow: pilot regenerates
+   * the OFP on simbrief.com after FlyAzoresACARS already cached the previous
+   * one at flight-start (e.g. pax/cargo/reserve changed). Click → backend
+   * re-pulls the bid (which carries the latest OFP id), fetches the OFP,
+   * and overwrites planned_block / planned_tow / planned_zfw / etc. on
+   * the active flight. The Loadsheet then compares against the new plan.
+   */
+  async function handleRefreshOfp() {
+    if (busy) return;
+    setBusy("refresh");
+    setError(null);
+    setRefreshMsg(null);
+    try {
+      await invoke("flight_refresh_simbrief");
+      setRefreshMsg(t("active_flight.refresh_ofp_done"));
+    } catch (err: unknown) {
+      // v0.7.8 v1.5.2: shared Helper formattiert Mismatch-JSON +
+      // bekannte Error-Codes in lesbare Notices (Spec §8).
+      // v1.5.3 (Thomas-QS): context="cockpit" damit phase_locked
+      // + no_simbrief_link lesbare Texte bekommen (statt null →
+      // String(err) → "[object Object]").
+      const formatted = formatRefreshError(
+        err as { code?: string; message?: string } | null,
+        t,
+        "cockpit",
+      );
+      setError(formatted?.text ?? String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * Force-discard local active-flight state without touching phpVMS. Useful
+   * when the cancel call fails because the PIREP is already gone server-side
+   * but our local state still thinks a flight is active.
+   */
+  async function handleForget() {
+    if (busy) return;
+    if (
+      !(await confirm({
+        message: t("active_flight.confirm_forget"),
+        destructive: true,
+      }))
+    )
+      return;
+    setBusy("forget");
+    setError(null);
+    try {
+      await invoke("flight_forget");
+      onEnded?.();
+    } catch (err: unknown) {
+      const msg =
+        typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: string }).message)
+          : String(err);
+      setError(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="active-flight">
+      {confirmDialog}
+      {/* v0.4.1: Sim-Disconnect-Pause-Banner. Sichtbar nur wenn der
+          Streamer einen Disconnect detektiert hat — sonst null.
+          Pilot sieht die letzten Sim-Werte zum Repositionieren und
+          klickt „Flug wiederaufnehmen" sobald er den Sim wieder
+          aufgesetzt hat. */}
+      {info.paused_since && info.paused_last_known && (
+        <DisconnectBanner
+          pausedSince={info.paused_since}
+          lastKnown={info.paused_last_known}
+          onResumed={() => {
+            // Trigger a status refresh by notifying the parent.
+            onEnded?.();
+          }}
+        />
+      )}
+      <header className="active-flight__header">
+        <div className="active-flight__title-block">
+          <span className="active-flight__label">
+            {t("active_flight.title")}
+          </span>
+          <div className="active-flight__heading">
+            <h2 className="active-flight__callsign">
+              {info.airline_icao
+                ? `${info.airline_icao} ${info.flight_number}`
+                : info.flight_number}
+            </h2>
+            <span
+              className={`active-flight__phase active-flight__phase--${info.phase}`}
+            >
+              {t(`active_flight.phase.${info.phase}`, {
+                defaultValue: info.phase,
+              })}
+            </span>
+          </div>
+        </div>
+        <div className="active-flight__route">
+          <span className="active-flight__icao">{info.dpt_airport}</span>
+          <span className="active-flight__route-arrow">
+            <span className="active-flight__arrow">→</span>
+            <span className="active-flight__route-distance">
+              {fmtDistance(info.distance_nm, i18n.language)}
+            </span>
+          </span>
+          <span className="active-flight__icao">{info.arr_airport}</span>
+        </div>
+        <div className="active-flight__actions">
+          <button
+            type="button"
+            className="button button--primary"
+            onClick={handleEnd}
+            disabled={busy !== null}
+          >
+            {busy === "end" ? t("active_flight.filing") : t("active_flight.end")}
+          </button>
+          <button type="button" onClick={handleCancel} disabled={busy !== null}>
+            {busy === "cancel"
+              ? t("active_flight.cancelling")
+              : t("active_flight.cancel")}
+          </button>
+          {/* OFP refresh — pre-takeoff only. After takeoff the plan
+              shouldn't change anyway, and we don't want pilots
+              accidentally clobbering the loadsheet baseline mid-flight. */}
+          {/* v0.7.7: Phase-Gate inkl. Pushback (Spec §6.2) — Plan-Werte sind
+              dort noch nutzbar, Score noch nicht festgenagelt. Backend hat
+              denselben Gate. */}
+          {(info.phase === "preflight" ||
+            info.phase === "boarding" ||
+            info.phase === "pushback" ||
+            info.phase === "taxi_out") && (
+            <button
+              type="button"
+              className="active-flight__refresh-ofp"
+              onClick={handleRefreshOfp}
+              disabled={busy !== null}
+              title={t("active_flight.refresh_ofp_hint")}
+            >
+              {busy === "refresh"
+                ? t("active_flight.refresh_ofp_busy")
+                : t("active_flight.refresh_ofp")}
+            </button>
+          )}
+          <button
+            type="button"
+            className="active-flight__forget"
+            onClick={handleForget}
+            disabled={busy !== null}
+            title={t("active_flight.forget_hint")}
+          >
+            {busy === "forget"
+              ? t("active_flight.forgetting")
+              : t("active_flight.forget")}
+          </button>
+        </div>
+        {refreshMsg && (
+          <div className="active-flight__refresh-msg" role="status">
+            ✓ {refreshMsg}
+          </div>
+        )}
+      </header>
+
+      {/* v0.3.0: RouteMap (Progress-Bar EDDW [✈] EGSS 0%) erst ab
+          Pushback einblenden. Vor Pushback ist 0 % Strecke logisch
+          unsinnig und verschwendet vertikalen Platz. Tachos bleiben
+          dagegen drin (User-Wunsch — nur 10 % kleiner). */}
+      {info.phase !== "preflight" && info.phase !== "boarding" && (
+        <RouteMap
+          dptIcao={info.dpt_airport}
+          arrIcao={info.arr_airport}
+          currentLat={simSnapshot?.lat ?? null}
+          currentLon={simSnapshot?.lon ?? null}
+          dptGate={info.dep_gate}
+          arrGate={info.arr_gate}
+        />
+      )}
+
+      <LiveTapes snapshot={simSnapshot ?? null} />
+
+      <InfoStrip
+        info={info}
+        snapshot={simSnapshot ?? null}
+        elapsedMinutes={Math.max(
+          0,
+          Math.floor((Date.now() - new Date(info.started_at).getTime()) / 60000),
+        )}
+      />
+
+      {/* v0.3.0: Loadsheet direkt unter dem InfoStrip — gehört zum
+          aktiven Flug, deshalb im selben Container. Verschwindet von
+          alleine ab TaxiOut/Pushback (siehe LoadsheetMonitor). */}
+      <LoadsheetMonitor info={info} />
+
+      <WeatherBriefing dptIcao={info.dpt_airport} arrIcao={info.arr_airport} />
+
+      {error && (
+        <p className="active-flight__error" role="alert">
+          {error}
+        </p>
+      )}
+
+      {validationMissing !== null && (
+        <ManualFileDialog
+          info={info}
+          missing={validationMissing}
+          onFiled={() => {
+            setValidationMissing(null);
+            onEnded?.();
+          }}
+          onCancelFlight={() => void handleCancelFromDialog()}
+          onClose={() => setValidationMissing(null)}
+        />
+      )}
+    </section>
+  );
+}
+
+// ===========================================================================
+// v0.4.1: Sim-Disconnect-Pause-Banner
+// ===========================================================================
+//
+// Wenn der Streamer im Backend `paused_since` setzt (Sim wegbrach >30 s),
+// rendert ActiveFlightPanel diese Component an oberster Stelle. Pilot
+// sieht die letzten bekannten Werte (LAT/LON/HDG/ALT/Fuel/ZFW), kann
+// damit das Flugzeug nach Sim-Restart auf die richtige Position setzen,
+// und klickt dann „Flug wiederaufnehmen" — der Streamer macht weiter.
+// Bewusst KEIN Auto-Resume — selbst wenn der Sim plötzlich wieder
+// Daten liefert, wartet das Backend auf den expliziten Klick (siehe
+// `flight_resume_after_disconnect` in lib.rs).
+
+interface DisconnectBannerProps {
+  pausedSince: string;
+  lastKnown: import("../types").PausedSnapshot;
+  onResumed: () => void;
+}
+
+function DisconnectBanner({
+  pausedSince,
+  lastKnown,
+  onResumed,
+}: DisconnectBannerProps) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const pausedDate = new Date(pausedSince);
+  const pausedTime = `${pausedDate.getHours().toString().padStart(2, "0")}:${pausedDate.getMinutes().toString().padStart(2, "0")}`;
+
+  const fmtCoord = (val: number, isLat: boolean): string => {
+    const hemi = isLat ? (val >= 0 ? "N" : "S") : val >= 0 ? "E" : "W";
+    return `${Math.abs(val).toFixed(4)}° ${hemi}`;
+  };
+
+  async function handleResume() {
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke("flight_resume_after_disconnect");
+      onResumed();
+    } catch (err: unknown) {
+      const msg =
+        typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: string }).message)
+          : String(err);
+      setError(msg);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="active-flight__paused-banner" role="alert">
+      <div className="active-flight__paused-header">
+        <span className="active-flight__paused-icon">⏸</span>
+        <div>
+          <strong>{t("active_flight.paused.title")}</strong>
+          <span className="active-flight__paused-since">
+            {t("active_flight.paused.since", { time: pausedTime })}
+          </span>
+        </div>
+      </div>
+      <p className="active-flight__paused-instructions">
+        {t("active_flight.paused.instructions")}
+      </p>
+      <div className="active-flight__paused-grid">
+        <div>
+          <span className="active-flight__paused-label">
+            {t("active_flight.paused.position")}
+          </span>
+          <code>
+            {fmtCoord(lastKnown.lat, true)} · {fmtCoord(lastKnown.lon, false)}
+          </code>
+        </div>
+        <div>
+          <span className="active-flight__paused-label">
+            {t("active_flight.paused.heading_alt")}
+          </span>
+          <code>
+            HDG {Math.round(lastKnown.heading_deg)}° · ALT{" "}
+            {Math.round(lastKnown.altitude_ft).toLocaleString()} ft
+          </code>
+        </div>
+        <div>
+          <span className="active-flight__paused-label">
+            {t("active_flight.paused.fuel")}
+          </span>
+          <code>
+            {Math.round(lastKnown.fuel_total_kg).toLocaleString()} kg
+          </code>
+        </div>
+        <div>
+          <span className="active-flight__paused-label">
+            {t("active_flight.paused.zfw")}
+          </span>
+          <code>
+            {lastKnown.zfw_kg !== null
+              ? `${Math.round(lastKnown.zfw_kg).toLocaleString()} kg`
+              : "—"}
+          </code>
+        </div>
+      </div>
+      <div className="active-flight__paused-actions">
+        <button
+          type="button"
+          className="button button--primary"
+          onClick={() => void handleResume()}
+          disabled={busy}
+        >
+          {busy
+            ? t("active_flight.paused.resuming")
+            : t("active_flight.paused.resume")}
+        </button>
+      </div>
+      {error && (
+        <p className="active-flight__paused-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
