@@ -1,7 +1,7 @@
-# AeroACARS
+# ASA-ACARS
 
-> Modern, open-source ACARS client for [phpVMS 7](https://phpvms.net) — Tauri 2 + Rust + React.
-> Made with ❤️ in Gifhorn — by Thomas Kant.
+> Cliente ACARS moderno e de código aberto para [phpVMS 7](https://phpvms.net) — Tauri 2 + Rust + React.
+> Feito com ❤️
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-blue.svg)](#installation)
@@ -9,181 +9,108 @@
 
 ---
 
-## Was ist AeroACARS?
+## O que é o ASA-ACARS?
 
-Ein moderner, plattformübergreifender ACARS-Client für phpVMS 7. Erfasst
-Telemetrie aus Flight Simulators, scort Landungen mit industrie-validierten
-Schwellen, korreliert Touchdowns auf Runway-Centerline-Genauigkeit und
-shippt saubere PIREPs zu deinem phpVMS-Server.
+Um cliente ACARS moderno e multiplataforma para o phpVMS 7. Regista telemetria de simuladores de voo, pontua aterragens com limites validados pela indústria, correlaciona o toque na pista com precisão de linha de centro (centerline) e envia PIREPs limpos para o teu servidor phpVMS.
 
-**Aktuell unterstützt:**
+**Atualmente suporta:**
 
-- ✅ **MSFS 2020 / MSFS 2024** — über raw SimConnect FFI (Windows-only,
-  kein FSUIPC nötig)
-- ✅ **X-Plane 11 / X-Plane 12** — über native UDP DataRefs
-  (cross-platform, kein Plugin nötig)
+- ✅ **MSFS 2020 / MSFS 2024** — via SimConnect FFI nativo (apenas Windows, sem necessidade de FSUIPC)
+- ✅ **X-Plane 11 / X-Plane 12** — via UDP DataRefs nativos (multiplataforma, sem necessidade de plugins)
 
 ---
 
-## Installation
+## Instalação
 
-Lade dir das Paket für deine Plattform aus dem [Latest Release](https://github.com/MANFahrer-GF/AeroACARS/releases/latest) herunter.
+Transfere o pacote correspondente à tua plataforma a partir da [Última Versão (Latest Release)](https://github.com/oAlvesOFF/ASA-ACARS/releases/latest).
 
 ### Windows (10 / 11, x64)
 
-1. `AeroACARS_<version>_x64-setup.exe` (NSIS-Installer) herunterladen und ausführen
-2. SmartScreen-Warnung wegklicken: „Weitere Informationen" → „Trotzdem ausführen" — wir sind noch nicht code-signed
-3. AeroACARS startet nach der Installation automatisch
-4. Login mit deinem phpVMS-API-Key
+1. Transfere e executa o ficheiro `ASA-ACARS_<version>_x64-setup.exe` (instalador NSIS).
+2. Ignora o aviso do SmartScreen: "Mais informações" → "Executar assim mesmo" — ainda não temos assinatura de código (code-signed).
+3. O ASA-ACARS inicia automaticamente após a instalação.
+4. Faz login com a tua chave de API do phpVMS.
 
 ### macOS (Apple Silicon — M1 / M2 / M3 / M4)
 
-1. `AeroACARS_<version>_aarch64.dmg` herunterladen
-2. DMG öffnen → AeroACARS-Icon in den Applications-Ordner ziehen
-3. **Beim ersten Start:** Gatekeeper blockt die App, weil sie nicht über die Apple Notarization gegangen ist. Du hast zwei Wege:
-   - **Per Rechtsklick:** Im Finder auf AeroACARS rechtsklicken → „Öffnen" → „Öffnen" im Dialog bestätigen. Danach merkt sich macOS die Erlaubnis und startet die App ab dann normal.
-   - **Per Terminal** (falls Rechtsklick die Option nicht zeigt — kommt bei strengeren Gatekeeper-Einstellungen vor):
+1. Transfere o ficheiro `ASA-ACARS_<version>_aarch64.dmg`.
+2. Abre o DMG → Arrasta o ícone do ASA-ACARS para a pasta Aplicações.
+3. **No primeiro arranque:** O Gatekeeper irá bloquear a app por não ter passado pela Notarização da Apple. Tens dois caminhos:
+   - **Via clique direito:** No Finder, clica com o botão direito no ASA-ACARS → "Abrir" → Confirma "Abrir" no diálogo. Depois disto, o macOS memoriza a permissão e inicia a app normalmente a partir daí.
+   - **Via Terminal** (caso o clique direito não mostre a opção — acontece com configurações restritivas do Gatekeeper):
      ```bash
-     xattr -dr com.apple.quarantine /Applications/AeroACARS.app
+     xattr -dr com.apple.quarantine /Applications/ASA-ACARS.app
      ```
-4. Login mit deinem phpVMS-API-Key
+4. Faz login com a tua chave de API do phpVMS.
 
-> **Hinweis:** Intel Macs werden derzeit nicht offiziell gebaut. Wenn dafür Bedarf besteht: ein Issue aufmachen, der Tauri-Build kann ohne große Mühe um `x86_64-apple-darwin` erweitert werden.
+> **Nota:** Os Macs com Intel não são compilados oficialmente de momento. Se houver necessidade: abre um *Issue*, o build do Tauri pode ser facilmente expandido para incluir `x86_64-apple-darwin`.
 
-### Auto-Updates
+### Atualizações Automáticas
 
-Ab v0.1.0+ erscheinen neue Versionen direkt als Update-Banner in der App — kein manueller Download mehr nötig. Der Updater verifiziert die Bundles per Ed25519-Signatur, also auch ohne Code-Signing/Notarization sicher.
-
----
-
-## Was kann AeroACARS?
-
-### Live-Telemetrie + Flugverfolgung
-- Phase-Detection-FSM (16 Phasen: Boarding → Pushback → TaxiOut → Takeoff → Climb → Cruise → Descent → Approach → Final → Landing → TaxiIn → BlocksOn → Arrived → PIREP)
-- Position-Streaming an phpVMS mit phasen-adaptiver Cadence
-- Offline-Queue für Position-Posts wenn das Netzwerk wegbricht
-
-### Touchdown-Analyse (industriegrade)
-- 50 Hz Sampling (matches GEES, höher als MSFS' default)
-- V/S-Capture aus latched SimVar (MSFS) oder Buffer-Min ±250 ms (GEES-Pattern)
-- Peak-G im 800-ms-Fenster nach Aufprall (Strut-Rebound ausgeschlossen)
-- AGL-basierte Bounce-Detection (35→5 ft, BeatMyLanding-aligned)
-- Native Sideslip aus VEL_BODY_X/Z (`atan2`)
-- Headwind/Crosswind aus airframe-relativen Wind-Komponenten
-- Score-Schwellen aus Boeing 737 FCOM, Airbus A320 FCOM, LH FOQA, vmsACARS-Defaults
-
-### Runway-Korrelation
-- OurAirports.com Runway-Datensatz (47.681 Bahnen, 4 MB) embedded
-- Touchdown-Lat/Lon → exakte Runway + Centerline-Distance + Threshold-Distance
-
-### PIREP-Submission
-- Voller Notes-Block (TIMES / TOUCHDOWN / RUNWAY / FUEL / DISTANCE / METAR)
-- ~40 Custom Fields (Title-Case + snake_case für Leaderboards)
-- Auto-File bei `Arrived`, mit manueller Override-Option
-- Bid-Delete via korrektem `/api/user/bids` Endpoint
-
-### Comfort-Features
-- Auto-Start-Watcher: Aufzeichnung beginnt automatisch wenn Aircraft am Bid-Departure-Airport steht
-- Persistente Activity-Log mit Crash-Recovery (per-Flight reset)
-- Live-Sim-Inspector im Debug-Modus (MSFS SimVars/LVars + X-Plane DataRefs)
-- METAR-Snapshots Dep/Arr automatisch beim Takeoff/Final
+A partir da v0.1.0+, as novas versões aparecem diretamente como um banner de atualização na app — sem necessidade de downloads manuais. O atualizador verifica os pacotes via assinatura Ed25519, sendo seguro mesmo sem assinatura de código/notarização.
 
 ---
 
-## Tech-Stack
+## O que o ASA-ACARS consegue fazer?
 
-- **Backend:** Rust (Tauri 2, raw SimConnect FFI für MSFS, std::net für X-Plane UDP)
-- **Frontend:** React 19 + TypeScript + Vite
-- **Persistence:** OS-Keyring für API-Keys, JSON-Sidecars für Activity-Log + Active-Flight-State
-- **Updater:** Tauri-Plugin-Updater mit Ed25519-Signatur, GitHub Releases als Source
+### Telemetria em Tempo Real + Rastreio de Voo
+- FSM de deteção de fase (16 fases: Boarding → Pushback → TaxiOut → Takeoff → Climb → Cruise → Descent → Approach → Final → Landing → TaxiIn → BlocksOn → Arrived → PIREP)
+- Streaming de posição para o phpVMS com cadência adaptativa à fase de voo.
+- Fila (Queue) offline para registos de posição caso a ligação à rede falhe.
 
----
+### Análise de Toque (Nível Industrial)
+- Amostragem a 50 Hz (equivalente ao GEES, superior ao padrão do MSFS).
+- Captura de V/S a partir de SimVar travada (MSFS) ou Buffer-Min ±250 ms (Padrão GEES).
+- G de pico (Peak-G) numa janela de 800 ms após o impacto (excluindo o ressalto dos amortecedores).
+- Deteção de ressalto (Bounce) baseada em AGL (35→5 pés, alinhado com BeatMyLanding).
+- Sideslip nativo via VEL_BODY_X/Z (`atan2`).
+- Vento de frente/través (Headwind/Crosswind) a partir de componentes de vento relativos à célula da aeronave.
+- Limites de pontuação baseados em FCOM da Boeing 737, Airbus A320, LH FOQA e padrões vmsACARS.
 
-## Schultern, auf denen AeroACARS steht
+### Correlação de Pista
+- Base de dados de pistas OurAirports.com incorporada (47.681 pistas, 4 MB).
+- Lat/Lon de toque → Identificação exata da pista + distância da linha de centro + distância do threshold.
 
-- **OurAirports** — Public-domain Runway-Datensatz
-- **BeatMyLanding** — Touchdown-Window-Calibration und Bounce-Detection-Pattern
-- **GEES** — Open-Source-Landingrate-Logger; reverse-engineered für V/S-Sign-Convention und native Sideslip-Berechnung
-- **LandingToast** — Live-VS-at-OnGround-Edge-Pattern
-- **Tauri 2 + Rust + React** — App-Framework
-- **MSFS SDK + X-Plane SDK** — Sim-Integration
+### Submissão de PIREP
+- Bloco de notas completo (TIMES / TOUCHDOWN / RUNWAY / FUEL / DISTANCE / METAR).
+- ~40 campos personalizados (Title-Case + snake_case para tabelas de classificação).
+- Envio automático ao chegar (`Arrived`), com opção de cancelamento manual.
+- Eliminação de licitação (Bid-Delete) via endpoint `/api/user/bids` correto.
 
----
-
-## Entwicklung
-
-```bash
-# Voraussetzung: Rust toolchain, Node.js 20+, ggf. MSFS 2024 SDK für sim-msfs build
-git clone https://github.com/MANFahrer-GF/AeroACARS.git
-cd AeroACARS/client
-npm install
-npm run tauri dev          # Dev-Mode mit Hot-Reload
-npm run tauri build -- --bundles nsis   # Release-Installer bauen
-```
-
----
-
-## Troubleshooting / Logs
-
-Wenn AeroACARS sich komisch verhält und du dem Issue-Tracker etwas Substanzielles mitschicken willst — hier ist, was wo liegt.
-
-### Wo AeroACARS Daten ablegt
-
-Alle Dateien liegen unter dem Tauri-Standard-`app_data_dir` mit Bundle-ID `com.aeroacars.app`:
-
-| Plattform | Vollständiger Pfad |
-|---|---|
-| **Windows** | `%APPDATA%\com.aeroacars.app\` <br>(typisch: `C:\Users\<dein-user>\AppData\Roaming\com.aeroacars.app\`) |
-| **macOS** | `~/Library/Application Support/com.aeroacars.app/` |
-
-In Windows kannst du den Ordner direkt mit `Win+R` → `%APPDATA%\com.aeroacars.app` öffnen. In macOS mit Finder → `Cmd+Shift+G` → den Pfad einfügen.
-
-### Was drin liegt
-
-| Datei | Was es ist |
-|---|---|
-| `flight_logs/<pirep_id>.jsonl` | **Per-Flug-Recorder** — eine Zeile pro Event (Position, Phasen-Übergang, Touchdown-Score, METAR-Snapshot). Append-only JSONL, beste Quelle für „warum hat der Flug X gemacht?". Eine Datei pro PIREP. |
-| `activity_log.json` | **In-App-Activity-Feed** — exakt die Zeilen, die im Cockpit-Tab erscheinen, persistiert über Restarts. |
-| `active_flight.json` | Snapshot des aktuell laufenden Flugs für die Resume-Funktion. Existiert nur während ein Flug läuft. |
-| `landing_history.json` | Historische Landungen für den „Landung"-Tab. |
-| `position_queue.bin` | Offline-Backlog: Positionen die wegen Netzwerkproblemen noch nicht hochgeladen werden konnten. Wird automatisch geleert sobald wieder online. |
-| `site.json`, `sim.json` | Lokale Settings (phpVMS-URL, gewählter Sim). Kein API-Key — der liegt im OS-Keyring. |
-
-Der **API-Key** liegt **nicht** als Datei vor. Er wird über das OS-Keyring (Windows Credential Manager / macOS Keychain) gespeichert. Kein Plaintext auf Disk.
-
-### Tracing / Console-Logs
-
-Die Rust-tracing-Ausgaben (HTTP-Requests, SimConnect-Status, Phasen-Berechnung im Detail) gehen aktuell nur auf **stderr** — sie landen **nicht** auf der Disk. Wenn du sie brauchst:
-
-- **Windows:** AeroACARS aus einer PowerShell-Konsole starten: `& "C:\Program Files\AeroACARS\AeroACARS.exe"` — dann erscheinen die tracing-Zeilen im Terminal.
-- **macOS:** Aus dem Terminal: `/Applications/AeroACARS.app/Contents/MacOS/AeroACARS`
-
-Verbosity-Level steuern via `RUST_LOG`:
-
-```bash
-# Standardmodus (info)
-RUST_LOG=info  ./AeroACARS
-
-# Volles Debug für unseren Code, info für alles andere
-RUST_LOG=info,aeroacars=debug  ./AeroACARS
-```
-
-### Issue melden
-
-Wenn was schiefgeht, ist die wertvollste Info im Bug-Report:
-
-1. Die `flight_logs/<pirep_id>.jsonl` des betroffenen Flugs (zippen, anhängen)
-2. Der relevante Ausschnitt aus `activity_log.json`
-3. Falls reproduzierbar: ein paar Zeilen tracing-Output mit `RUST_LOG=info,aeroacars=debug` aus dem Terminal-Run
-
-Issues bitte über → [github.com/MANFahrer-GF/AeroACARS/issues](https://github.com/MANFahrer-GF/AeroACARS/issues)
+### Funcionalidades de Conforto
+- Auto-Start-Watcher: A gravação começa automaticamente quando a aeronave está no aeroporto de partida da licitação.
+- Registo de atividade persistente com recuperação de falhas (reset por voo).
+- Inspetor de simulador em tempo real no modo de depuração (MSFS SimVars/LVars + X-Plane DataRefs).
+- Snapshots de METAR Dep/Arr automáticos na descolagem e final.
 
 ---
 
-## License
+## Stack Tecnológica
 
-MIT — siehe [LICENSE](LICENSE).
+- **Backend:** Rust (Tauri 2, SimConnect FFI nativo para MSFS, std::net para X-Plane UDP).
+- **Frontend:** React 19 + TypeScript + Vite.
+- **Persistência:** Keyring do SO para chaves de API, ficheiros JSON secundários para logs de atividade e estado do voo ativo.
+- **Atualizador:** Plugin-Updater do Tauri com assinatura Ed25519, GitHub Releases como fonte.
 
 ---
 
-**Contact:** Thomas Kant · German Sky Group · [github.com/MANFahrer-GF](https://github.com/MANFahrer-GF)
+## Ombro de Gigantes (Créditos)
+
+- **OurAirports** — Base de dados de pistas em domínio público.
+- **BeatMyLanding** — Calibração de janela de toque e padrão de deteção de ressalto.
+- **GEES** — Logger de taxa de aterragem open-source; engenharia reversa para convenção de sinais de V/S e cálculo de sideslip nativo.
+- **LandingToast** — Padrão de Live-VS-at-OnGround-Edge.
+- **Tauri 2 + Rust + React** — Framework da aplicação.
+- **MSFS SDK + X-Plane SDK** — Integração com simuladores.
+
+---
+
+### Reportar um Problema
+
+Se algo correr mal, a informação mais valiosa no relatório de erro é:
+
+1. O ficheiro `flight_logs/<pirep_id>.jsonl` do voo afetado (compactado em .zip).
+2. O excerto relevante do `activity_log.json`.
+3. Se for reproduzível: algumas linhas da saída de tracing com `RUST_LOG=info,ASA-ACARS=debug` via execução no terminal.
+
+Por favor, submete os problemas em → [github.com/MANFahrer-GF/ASA-ACARS/issues](https://github.com/oAlvesOFF/ASA-ACARS/issues)
