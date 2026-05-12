@@ -113,4 +113,4 @@ Se algo correr mal, a informação mais valiosa no relatório de erro é:
 2. O excerto relevante do `activity_log.json`.
 3. Se for reproduzível: algumas linhas da saída de tracing com `RUST_LOG=info,ASA-ACARS=debug` via execução no terminal.
 
-Por favor, submete os problemas em → [github.com/MANFahrer-GF/ASA-ACARS/issues](https://github.com/oAlvesOFF/ASA-ACARS/issues)
+Por favor, submete os problemas em → [github.com/oAlvesOFF/ASA-ACARS/issues](https://github.com/oAlvesOFF/ASA-ACARS/issues)
