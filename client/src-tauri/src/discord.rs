@@ -48,6 +48,7 @@ pub enum EventKind {
 #[derive(Debug, Clone, Default)]
 pub struct EventContext {
     pub callsign: String,            // "RYR100" — Flight-Number-Teil
+    #[allow(dead_code)]
     pub airline_icao: String,        // "RYR" — für Logo-Lookup-Fallback
     pub airline_logo_url: Option<String>, // direkt von phpVMS bid.flight.airline.logo
     pub dpt_icao: String,            // "LOWS"
@@ -63,6 +64,7 @@ pub struct EventContext {
     pub landing_rate_fpm: Option<f32>,    // bei Landing
     pub score: Option<i32>,               // bei Landing/PIREP
     pub distance_nm: Option<f64>,
+    #[allow(dead_code)]
     pub fuel_used_kg: Option<f32>,
     pub flight_time_min: Option<i32>,
 }
@@ -564,6 +566,7 @@ impl RichPresenceService {
     }
 
     /// Discord-Status komplett entfernen (App schließt).
+    #[allow(dead_code)]
     pub fn clear(&self) {
         let mut guard = self.client.lock().expect("rp client lock");
         if let Some(client) = guard.as_mut() {

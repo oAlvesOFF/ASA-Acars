@@ -3113,7 +3113,7 @@ fn aircraft_limits_for(icao: &str) -> AircraftLimits {
         "C25A" | "C25B" | "C25C" | "C525" | "C56X" | "C68A" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(105.0) },
         // Turboprops
         "DH8A" | "DH8B" | "DH8C" | "DH8D" | "AT43" | "AT72" | "AT75" | "AT76" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(110.0) },
-        "B190" | "B350" | "B190" => AircraftLimits { max_bank_landing_deg: 10.0, typical_vref_kt: Some(95.0) },
+        "B190" | "B350" => AircraftLimits { max_bank_landing_deg: 10.0, typical_vref_kt: Some(95.0) },
         // GA Singles
         "C172" | "C152" | "C150" | "C162" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(65.0) },
         "C182" | "C206" | "C208" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(75.0) },
@@ -6910,7 +6910,7 @@ mod pirep_queue {
         out
     }
 
-    pub fn count(app: &AppHandle) -> usize {
+    pub fn _count(app: &AppHandle) -> usize {
         let Some(d) = dir(app) else { return 0; };
         let Ok(rd) = std::fs::read_dir(&d) else { return 0; };
         rd.flatten()
@@ -11922,7 +11922,7 @@ fn current_premium_touchdown(app: &AppHandle) -> Option<sim_xplane::PremiumTouch
 /// `(ever_seen, active)` for the X-Plane sim path; `(false, false)`
 /// for any other sim. UI uses `active` to show the "X-PLANE PREMIUM"
 /// badge.
-fn current_premium_status(app: &AppHandle) -> sim_xplane::PremiumStatus {
+fn _current_premium_status(app: &AppHandle) -> sim_xplane::PremiumStatus {
     let state = app.state::<AppState>();
     let kind = read_sim_config(app).kind;
     if !kind.is_xplane() {
