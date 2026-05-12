@@ -120,6 +120,52 @@ fn de_int_or_str<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
     d.deserialize_any(V)
 }
 
+fn de_opt_i64_or_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum IntOrStr {
+        Int(i64),
+        Str(String),
+    }
+    
+    let opt = Option::<IntOrStr>::deserialize(d)?;
+    match opt {
+        Some(IntOrStr::Int(i)) => Ok(Some(i)),
+        Some(IntOrStr::Str(s)) => {
+            let s = s.trim();
+            if s.is_empty() {
+                Ok(None)
+            } else {
+                s.parse::<i64>().map(Some).map_err(|_| serde::de::Error::custom(format!("not an integer: {s:?}")))
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+fn de_opt_i32_or_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i32>, D::Error> {
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum IntOrStr {
+        Int(i32),
+        Str(String),
+    }
+    
+    let opt = Option::<IntOrStr>::deserialize(d)?;
+    match opt {
+        Some(IntOrStr::Int(i)) => Ok(Some(i)),
+        Some(IntOrStr::Str(s)) => {
+            let s = s.trim();
+            if s.is_empty() {
+                Ok(None)
+            } else {
+                s.parse::<i32>().map(Some).map_err(|_| serde::de::Error::custom(format!("not an integer: {s:?}")))
+            }
+        }
+        None => Ok(None),
+    }
+}
+
 // v0.5.49 — HTTP-Client-Hardening gegen "Fehler 1236" (NAT-Eviction +
 // dead-Socket-Hangs). Vorher: nur DEFAULT_TIMEOUT=20s am total request,
 // kein connect_timeout, kein tcp_keepalive. Eine vom Router/ISP gekillte
@@ -257,13 +303,16 @@ impl Connection {
 /// us one debug round to spot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
+    #[serde(deserialize_with = "de_int_or_str")]
     pub id: i64,
+    #[serde(deserialize_with = "de_int_or_str")]
     pub pilot_id: i64,
     /// Formatted pilot identifier, e.g. `GSG0001`.
     #[serde(default)]
     pub ident: Option<String>,
     pub name: String,
     pub email: Option<String>,
+    #[serde(default, deserialize_with = "de_opt_i64_or_str")]
     pub airline_id: Option<i64>,
     /// ICAO of the airport the pilot is currently at.
     #[serde(default, alias = "curr_airport_id")]
@@ -383,10 +432,10 @@ pub struct Flight {
     #[serde(default, deserialize_with = "de_opt_str_or_int")]
     pub alt_airport_id: Option<String>,
     /// Scheduled flight time in minutes.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_i32_or_str")]
     pub flight_time: Option<i32>,
     /// Cruise level (e.g. 360 == FL360).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_i32_or_str")]
     pub level: Option<i32>,
     #[serde(default, deserialize_with = "de_opt_str_or_int")]
     pub route: Option<String>,
@@ -413,7 +462,7 @@ pub struct SimBrief {
     /// JSON briefing endpoint exposed by phpVMS Core.
     #[serde(default)]
     pub url: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_i64_or_str")]
     pub aircraft_id: Option<i64>,
     /// SimBrief-derived subfleet info, including the fares (passenger / cargo
     /// counts) the OFP was generated against. We carry these forward into the
@@ -518,20 +567,21 @@ pub struct SimBriefSubfleet {
 /// it returns based on context (subfleet vs. PIREP file).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Fare {
+    #[serde(deserialize_with = "de_int_or_str")]
     pub id: i64,
     #[serde(default)]
     pub code: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_i32_or_str")]
     pub capacity: Option<i32>,
     /// Number of passengers (or cargo units) the OFP was generated for.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_i32_or_str")]
     pub count: Option<i32>,
     #[serde(default)]
     pub price: Option<f64>,
     /// 0 = passenger fare, 1 = cargo (phpVMS convention).
-    #[serde(default, rename = "type")]
+    #[serde(default, rename = "type", deserialize_with = "de_opt_i32_or_str")]
     pub fare_type: Option<i32>,
 }
 
@@ -570,7 +620,7 @@ pub struct PrefileBody {
     pub route_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub route_leg: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_i32_or_str")]
     pub level: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub planned_distance: Option<f64>,
@@ -643,7 +693,7 @@ pub struct PositionEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FileBody {
     /// Total flight time in minutes (takeoff → landing).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_i32_or_str")]
     pub flight_time: Option<i32>,
     /// Fuel used (units configured site-side; phpVMS default is pounds).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -659,7 +709,7 @@ pub struct FileBody {
     /// Cruise level in feet (e.g. 36000). Native phpVMS column on the
     /// PIREP details page (`Flt.Level`); we report the highest steady
     /// altitude the aircraft held during the flight.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_i32_or_str")]
     pub level: Option<i32>,
     /// Touchdown vertical speed in fpm (negative on a real landing).
     /// phpVMS displays this as "Landing Rate" on the PIREP overview.
@@ -696,6 +746,7 @@ pub struct FileBody {
 /// and `count` for the loaded amount.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FareEntry {
+    #[serde(deserialize_with = "de_int_or_str")]
     pub id: i64,
     pub count: i32,
 }
@@ -728,7 +779,7 @@ pub struct UpdateBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// Seconds since block-off. Monotonically growing → guarantees dirty.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_i32_or_str")]
     pub flight_time: Option<i32>,
     /// Distance flown so far (nmi). Also used by the live-map sidebar.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -746,7 +797,7 @@ pub struct UpdateBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_fuel: Option<f64>,
     /// Current cruise level / altitude in feet (e.g. 34000).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_i32_or_str")]
     pub level: Option<i32>,
     /// Free-form ACARS source identifier shown in the PIREP detail.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -851,7 +902,7 @@ pub struct PirepFull {
     pub dpt_airport_id: Option<String>,
     #[serde(default)]
     pub arr_airport_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_i32_or_str")]
     pub flight_time: Option<i32>,
     // `distance` intentionally omitted — phpVMS sometimes returns it as
     // a `{value, unit}` object (e.g. on `/api/pireps/{id}`) and sometimes
@@ -872,11 +923,11 @@ pub struct PirepCreated {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PirepSummary {
     pub id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_i64_or_str")]
     pub airline_id: Option<i64>,
     #[serde(default)]
     pub flight_number: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_i64_or_str")]
     pub aircraft_id: Option<i64>,
     /// phpVMS PirepState: 0=IN_PROGRESS, 1=PENDING, 2=ACCEPTED, 3=CANCELLED, …
     #[serde(default)]
@@ -905,6 +956,7 @@ pub struct PirepSummary {
 /// `aircraft` flatten — fertig. Kein N+1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubfleetWithAircraft {
+    #[serde(deserialize_with = "de_int_or_str")]
     pub id: i64,
     #[serde(default)]
     pub name: Option<String>,
@@ -923,6 +975,7 @@ pub struct SubfleetWithAircraft {
 /// e.g. when phpVMS rejects a prefile with `aircraft-not-available`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AircraftDetails {
+    #[serde(deserialize_with = "de_int_or_str")]
     pub id: i64,
     #[serde(default)]
     pub registration: Option<String>,
@@ -1876,3 +1929,4 @@ mod tests {
         assert_eq!(ofp.request_id, "");
     }
 }
+

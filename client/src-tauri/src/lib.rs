@@ -657,6 +657,8 @@ struct AppState {
     /// App-Start/Login via App.tsx zurueck-gesynct.
     /// Spec docs/spec/ofp-refresh-simbrief-direct-v0.7.8.md §4.
     simbrief_settings: Mutex<SimBriefSettings>,
+    /// Discord Rich Presence service.
+    discord_rp: discord::RichPresenceService,
 }
 
 /// v0.7.8: SimBrief-Identifier-Settings. Beide Felder optional, aber
@@ -7106,10 +7108,10 @@ fn open_landing_store(app: &AppHandle) -> Option<LandingStore> {
 /// Returns true wenn der 30s-Dwell starten/laufen darf.
 pub fn arrived_fallback_conditions_basic(
     on_ground: bool,
-    engines_running: u8,
+    engines_running: bool,
     groundspeed_kt: f32,
 ) -> bool {
-    on_ground && engines_running == 0 && groundspeed_kt < 1.0
+    on_ground && !engines_running && groundspeed_kt < 1.0
 }
 
 /// v0.7.5 Phase-Safety Hotfix (Spec §13.9):
@@ -8402,6 +8404,7 @@ async fn flight_end(
     state: tauri::State<'_, AppState>,
     divert_to: Option<String>,
 ) -> Result<(), UiError> {
+    state.discord_rp.set(discord::PresenceState::Idle);
     let divert_to = divert_to
         .as_deref()
         .map(|s| s.trim().to_uppercase())
@@ -9243,6 +9246,7 @@ async fn flight_end_manual(
     block_off_at_iso: Option<String>,
     block_on_at_iso: Option<String>,
 ) -> Result<(), UiError> {
+    state.discord_rp.set(discord::PresenceState::Idle);
     let flight = {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         guard
@@ -9524,6 +9528,7 @@ async fn flight_cancel(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), UiError> {
+    state.discord_rp.set(discord::PresenceState::Idle);
     let flight = {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         guard
@@ -10883,6 +10888,40 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
     });
 }
 
+fn update_discord_rp(flight: &ActiveFlight, app_state: &AppState) {
+    let stats = flight.stats.lock().expect("flight stats");
+    let phase_label = match stats.phase {
+        FlightPhase::Preflight => "Preflight",
+        FlightPhase::Boarding => "Boarding",
+        FlightPhase::Pushback => "Pushback",
+        FlightPhase::TaxiOut => "Taxiing out",
+        FlightPhase::TakeoffRoll => "Takeoff roll",
+        FlightPhase::Takeoff => "Takeoff",
+        FlightPhase::Climb => "Climbing",
+        FlightPhase::Cruise => "Cruising",
+        FlightPhase::Descent => "Descending",
+        FlightPhase::Approach => "On Approach",
+        FlightPhase::Final => "On Final",
+        FlightPhase::Landing => "Landing",
+        FlightPhase::TaxiIn => "Taxiing in",
+        FlightPhase::BlocksOn => "Blocks on",
+        FlightPhase::Arrived => "Arrived",
+        FlightPhase::PirepSubmitted => "PIREP Submitted",
+        FlightPhase::Holding => "Holding",
+    }.to_string();
+
+    let cruise_fl = None; // TODO: Obter planned_altitude se disponível.
+    app_state.discord_rp.set(discord::PresenceState::InFlight {
+        callsign: format_callsign(&flight.airline_icao, &flight.flight_number),
+        dpt_icao: flight.dpt_airport.clone(),
+        arr_icao: flight.arr_airport.clone(),
+        phase_label,
+        aircraft_type: Some(flight.aircraft_icao.clone()).filter(|s| !s.is_empty()),
+        cruise_fl,
+        started_at_unix: flight.started_at.timestamp(),
+    });
+}
+
 fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
     if flight
         .streamer_spawned
@@ -10897,6 +10936,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
     }
     tauri::async_runtime::spawn(async move {
         tracing::info!(pirep_id = %flight.pirep_id, "position streamer started");
+        update_discord_rp(&flight, &app.state::<AppState>());
         // Heartbeat tracker: ensures `POST /pireps/{id}/update` fires at
         // least every `HEARTBEAT_INTERVAL` so phpVMS's RemoveExpiredLiveFlights
         // cron never reaches the inactivity threshold. Initialised one
@@ -11069,6 +11109,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
             }
             let phase_change = step_flight(&flight, &snap);
+            if phase_change.is_some() {
+                update_discord_rp(&flight, &app.state::<AppState>());
+            }
             // v0.4.0: Discord-Webhook-Posts für Takeoff + Landing.
             // Wir feuern fire-and-forget (tokio::spawn) damit der
             // Streamer-Tick nie auf Discord wartet — ein langsamer
@@ -11935,6 +11978,10 @@ fn extract_icao_code(raw: &str) -> Option<String> {
 
 fn engines_effectively_running(stats: &FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) -> bool {
     if snap.engines_running > 0 { return true; }
+    // v0.7.9: Fallback for aircraft that don't report GENERAL ENG COMBUSTION
+    // correctly (e.g. Fenix, PMDG in some states). If fuel flow is > 10 kg/h,
+    // the engines are definitely running.
+    if snap.fuel_flow_kg_per_h.unwrap_or(0.0) > 10.0 { return true; }
     stats
         .last_engines_running_above_zero_at
         .map(|t| (now - t).num_milliseconds() < 2000)
@@ -11948,7 +11995,7 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
     // v0.5.40: Anti-Flicker-State + Pushback-Active-Tracking refreshen.
     // Muss am Anfang passieren damit alle nachfolgenden Phase-Handler den
     // aktuellen Stand sehen.
-    if snap.engines_running > 0 {
+    if snap.engines_running > 0 || snap.fuel_flow_kg_per_h.unwrap_or(0.0) > 10.0 {
         stats.last_engines_running_above_zero_at = Some(_now_for_state_update);
     }
     if let Some(pb) = snap.pushback_state {
@@ -12066,6 +12113,9 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
     let now = Utc::now();
     let prev_phase = stats.phase;
     let mut next_phase = prev_phase;
+
+    // v0.7.9: Global engine state for this tick.
+    let engines_running = engines_effectively_running(&stats, snap, now);
     let was_on_ground = stats.was_on_ground.unwrap_or(snap.on_ground);
     // was_parking_brake is no longer consulted by any phase transition
     // (we removed the brake-release-only Pushback trigger), but the
@@ -12197,7 +12247,7 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                     }
                     stats.loadsheet_logged_at_blockoff = true;
                 }
-                next_phase = if snap.engines_running == 0 {
+                next_phase = if !engines_running {
                     FlightPhase::Pushback
                 } else {
                     FlightPhase::TaxiOut
@@ -12282,7 +12332,6 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
             // stecken bleiben (siehe URO 913 ZWWW→EHBK 2026-05-09:
             // 9 h hängen geblieben weil pushback_state konstant 3 war).
             const PUSHBACK_DWELL_SECS: i64 = 10;
-            let engines_running = engines_effectively_running(&stats, snap, now);
             let powered_taxi = snap.on_ground
                 && engines_running
                 && snap.groundspeed_kt > 3.0;
@@ -12311,6 +12360,14 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                 // Alte Fallback-Logik: bewegt sich + Triebwerke an = TaxiOut.
                 next_phase = FlightPhase::TaxiOut;
             }
+
+            // v0.7.9 Escape hatch: if we are moving fast with engines on, it's taxi.
+            // Covers cases where the pilot didn't stop for 10s after tug_done.
+            // No tug pushes at 10 kt.
+            if powered_taxi && snap.groundspeed_kt > 10.0 {
+                stats.pushback_stopped_at = None;
+                next_phase = FlightPhase::TaxiOut;
+            }
         }
         FlightPhase::TaxiOut => {
             // Threshold lowered from 40 → 30 kt so GA aircraft (Cessna,
@@ -12320,7 +12377,7 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
             // doesn't accidentally trigger TakeoffRoll without throttle.
             if snap.on_ground
                 && snap.groundspeed_kt > 30.0
-                && engines_effectively_running(&stats, snap, now)
+                && engines_running
             {
                 next_phase = FlightPhase::TakeoffRoll;
             }
@@ -13514,7 +13571,7 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                     let agl = snap.altitude_agl_ft as f32;
                     let conds_met = agl > TOUCH_AND_GO_AGL_THRESHOLD_FT
                         && !snap.on_ground
-                        && snap.engines_running > 0;
+                        && engines_running;
                     if conds_met {
                         let pending = stats.touch_and_go_pending_since.get_or_insert(now);
                         if (now - *pending).num_seconds() >= TOUCH_AND_GO_DWELL_SECS {
@@ -13655,7 +13712,7 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
             if let Some(block_on) = stats.block_on_at {
                 let settled_secs = (now - block_on).num_seconds();
                 if settled_secs >= 30
-                    && snap.engines_running == 0
+                    && !engines_running
                     && snap.parking_brake
                     && snap.on_ground
                 {
@@ -13715,7 +13772,7 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
         // machine.md §13.8): siehe arrived_fallback_conditions_basic.
         let conditions_basic = arrived_fallback_conditions_basic(
             snap.on_ground,
-            snap.engines_running,
+            engines_running,
             snap.groundspeed_kt,
         );
         if conditions_basic {
@@ -17553,6 +17610,7 @@ pub fn run() {
     // fetches, etc.) when they re-open Tauri mid-flight, instead of
     // an empty log every time.
     let app_state = AppState::default();
+    app_state.discord_rp.set(discord::PresenceState::Idle);
     {
         let restored = load_activity_log_at_boot();
         let mut log = app_state.activity_log.lock().expect("activity_log lock");

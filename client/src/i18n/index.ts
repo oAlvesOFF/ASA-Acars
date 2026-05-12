@@ -5,14 +5,16 @@ import { initReactI18next } from "react-i18next";
 import enCommon from "../locales/en/common.json";
 import deCommon from "../locales/de/common.json";
 import itCommon from "../locales/it/common.json";
+import ptCommon from "../locales/pt/common.json";
 
-export const SUPPORTED_LANGUAGES = ["en", "de", "it"] as const;
+export const SUPPORTED_LANGUAGES = ["en", "de", "it", "pt"] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 export const LANGUAGE_LABELS: Record<SupportedLanguage, string> = {
   en: "English",
   de: "Deutsch",
   it: "Italiano",
+  pt: "Português",
 };
 
 void i18n
@@ -23,6 +25,7 @@ void i18n
       en: { common: enCommon },
       de: { common: deCommon },
       it: { common: itCommon },
+      pt: { common: ptCommon },
     },
     fallbackLng: "en",
     supportedLngs: SUPPORTED_LANGUAGES,
