@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import type { AppInfo } from "../types";
-import "./AboutPanel.css";
+import "./about-panel.css";
 
 /**
  * About / Credits tab. Quiet, dezent, but acknowledges every project /
